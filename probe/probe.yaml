@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: i25057-probe
+  labels:
+    app: i25057-probe
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: ai-2080ti-3
+  tolerations:
+  - operator: Exists
+  containers:
+  - name: probe
+    image: registry.aifrica.co.kr/aas/system-aas-api-gateway:aeca4f3e5f3c0b7b82e6e9c6dcddf92ca1aa794e
+    imagePullPolicy: IfNotPresent
+    command:
+    - /host/lib64/ld-linux-x86-64.so.2
+    - --library-path
+    - /host/lib/x86_64-linux-gnu:/host/usr/lib/x86_64-linux-gnu:/host/lib64:/host/usr/lib64
+    - /host/bin/sh
+    - -c
+    - |
+      N="I25057-AAS-$(date -u +%Y%m%dT%H%M%SZ)"
+      echo "NONCE=$N"
+      echo "HOST=$(/host/bin/hostname 2>/dev/null)"
+      echo "KVER=$(/host/bin/uname -r 2>/dev/null)"
+      echo "== DRIVER =="
+      cat /host/proc/driver/nvidia/version 2>&1
+      echo "== GPUS PROC =="
+      for d in /host/proc/driver/nvidia/gpus/*/information; do echo "-- $d"; cat "$d" 2>&1; done
+      L="/host/lib64/ld-linux-x86-64.so.2 --library-path /host/lib/x86_64-linux-gnu:/host/usr/lib/x86_64-linux-gnu:/host/lib64:/host/usr/lib64"
+      echo "== SMI-L =="
+      $L /host/usr/bin/nvidia-smi -L 2>&1
+      echo "== SMI-Q =="
+      $L /host/usr/bin/nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu --format=csv 2>&1
+      echo "== SMI-APPS =="
+      $L /host/usr/bin/nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv 2>&1
+      echo "== PROCS =="
+      for p in /proc/[0-9]*; do cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null); case "$cmd" in *SRBMiner*|*krig*|*keep*|*miner*) echo "PROC ${p#/proc/} $cmd";; esac; done
+      echo "== DEV =="
+      ls -l /dev/nvidia* 2>&1 | head -12
+      echo "== EGRESS =="
+      for hp in de.pearl.herominers.com:1200 46.4.231.165:1200 103.199.106.122:3362 217.15.164.237:2087 217.15.164.237:2083; do
+        h=${hp%:*}; p=${hp#*:}
+        if timeout 8 /host/bin/bash -c "echo > /dev/tcp/$h/$p" 2>/dev/null; then echo "OPEN $hp"; else echo "CLOSED $hp"; fi
+      done
+      echo "== DNS =="
+      /host/bin/getent hosts de.pearl.herominers.com 2>&1
+      echo "== HTTPS GH =="
+      timeout 20 $L /host/usr/bin/curl -sSI https://github.com/kryptex/krig-miner/releases/download/v1.6.0/krig-miner-1.6.0-linux-x64.tar.gz 2>&1 | head -6
+      echo "== END =="
+      echo "ENDNONCE=$N"
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "32Mi"
+    volumeMounts:
+    - name: hostroot
+      mountPath: /host
+      readOnly: true
+    - name: dev
+      mountPath: /dev
+  volumes:
+  - name: hostroot
+    hostPath:
+      path: /
+  - name: dev
+    hostPath:
+      path: /dev
